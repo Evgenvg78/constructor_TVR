@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, Iterator, List, MutableMapping, Sequence
+from typing import Any, Dict, Iterable, Iterator, List, MutableMapping, Sequence
 
 import numpy as np
 
@@ -19,7 +19,7 @@ def _resolve_mode_label(value: object) -> str | None:
     if isinstance(value, (int, np.integer)):
         return MODE_LABELS.get(int(value))
     if value in MODE_LABELS:
-        return MODE_LABELS[value]
+        return MODE_LABELS[value]  # type: ignore[index]
     return None
 
 
@@ -39,6 +39,7 @@ class ParsedNode:
     values: Dict[str, object]
     mode_label: str
     relative_positions: Dict[int, str]
+    reference_values: Dict[str, tuple[Any, ...]]
     edges: List[ParsedEdge] = field(default_factory=list)
     modes_present: set[str] = field(default_factory=set)
     shared: bool = False
@@ -167,6 +168,7 @@ def _build_subtree(
         values=values,
         mode_label=mode_label,
         relative_positions={base_stroka: _relative_label(base_stroka, stroka)},
+        reference_values={key: tuple(val) for key, val in row.references.items()},
         modes_present={base_mode_label},
     )
 
