@@ -259,6 +259,7 @@ def build_portfolio_advanced(
     security_column: str = "Sec_0",
     price_column: str = "sec_0_price",
     param_num_column: str = "param_num",
+    ensure_min_contract: bool = True,
 ) -> pd.DataFrame:
     """
     Построение портфеля с распределением капитала по группам инструментов и параметрам.
@@ -269,6 +270,7 @@ def build_portfolio_advanced(
         security_column: Название столбца с инструментами для группировки
         price_column: Название столбца с ценами для расчета лотов
         param_num_column: Название столбца с номерами параметров в группе
+        ensure_min_contract: Если True, гарантирует минимум 1 контракт каждому инструменту
     
     Returns:
         DataFrame с добавленными столбцами: allocation, estimated_lots, used_capital, unused_capital
@@ -294,12 +296,12 @@ def build_portfolio_advanced(
     result_df["used_capital"] = 0.0
     result_df["unused_capital"] = 0.0
     
-    # Получаем количество уникальных инструментов
-    unique_securities = result_df[security_column].nunique()
-    capital_per_security = capital / unique_securities
-    
     # Группируем по инструментам
     grouped = result_df.groupby(security_column)
+    
+    # ЭТАП 1: Обычное распределение капитала (как в оригинальной логике)
+    unique_securities = result_df[security_column].nunique()
+    capital_per_security = capital / unique_securities
     
     for security_name, group in grouped:
         # Сортируем группу по номеру параметра
@@ -343,6 +345,28 @@ def build_portfolio_advanced(
             target_idx = group_sorted.index[leftover_idx]
             result_df.at[target_idx, "allocation"] += leftover_capital
             result_df.at[target_idx, "unused_capital"] = leftover_capital
+    
+    # ЭТАП 2: Если включен режим минимального контракта, добавляем по 1 контракту тем, кто остался без контрактов
+    if ensure_min_contract:
+        # Находим инструменты без контрактов
+        instruments_with_contracts = result_df.groupby(security_column)['estimated_lots'].sum()
+        instruments_without_contracts = instruments_with_contracts[instruments_with_contracts == 0].index.tolist()
+        
+        if instruments_without_contracts:
+            for security_name in instruments_without_contracts:
+                group = result_df[result_df[security_column] == security_name]
+                group_sorted = group.sort_values(param_num_column)
+                
+                # Получаем цену инструмента
+                instrument_price = float(group_sorted[price_column].iloc[0])
+                
+                if instrument_price > 0:
+                    # Выделяем 1 контракт первому параметру этого инструмента
+                    first_idx = group_sorted.index[0]
+                    result_df.at[first_idx, "estimated_lots"] = 1
+                    result_df.at[first_idx, "used_capital"] = instrument_price
+                    result_df.at[first_idx, "allocation"] = instrument_price
+                    result_df.at[first_idx, "unused_capital"] = 0.0
     
     return result_df
 
