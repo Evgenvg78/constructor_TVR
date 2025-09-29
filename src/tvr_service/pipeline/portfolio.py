@@ -253,3 +253,105 @@ def allocations_to_frame(entries: Sequence[PortfolioEntry]) -> pd.DataFrame:
     return frame
 
 
+def build_portfolio_advanced(
+    data: pd.DataFrame,
+    capital: float,
+    security_column: str = "Sec_0",
+    price_column: str = "sec_0_price",
+    param_num_column: str = "param_num",
+) -> pd.DataFrame:
+    """
+    Построение портфеля с распределением капитала по группам инструментов и параметрам.
+    
+    Args:
+        data: DataFrame с данными об инструментах и параметрах
+        capital: Общий капитал для распределения
+        security_column: Название столбца с инструментами для группировки
+        price_column: Название столбца с ценами для расчета лотов
+        param_num_column: Название столбца с номерами параметров в группе
+    
+    Returns:
+        DataFrame с добавленными столбцами: allocation, estimated_lots, used_capital, unused_capital
+    """
+    if capital <= 0:
+        raise ValueError("Капитал должен быть положительным числом")
+    
+    if data.empty:
+        raise ValueError("DataFrame не может быть пустым")
+    
+    # Проверяем наличие необходимых столбцов
+    required_columns = [security_column, price_column, param_num_column]
+    missing_columns = [col for col in required_columns if col not in data.columns]
+    if missing_columns:
+        raise ValueError(f"Отсутствуют столбцы: {missing_columns}")
+    
+    # Создаем копию данных для работы
+    result_df = data.copy()
+    
+    # Инициализируем новые столбцы
+    result_df["allocation"] = 0.0
+    result_df["estimated_lots"] = 0
+    result_df["used_capital"] = 0.0
+    result_df["unused_capital"] = 0.0
+    
+    # Получаем количество уникальных инструментов
+    unique_securities = result_df[security_column].nunique()
+    capital_per_security = capital / unique_securities
+    
+    # Группируем по инструментам
+    grouped = result_df.groupby(security_column)
+    
+    for security_name, group in grouped:
+        # Сортируем группу по номеру параметра
+        group_sorted = group.sort_values(param_num_column)
+        
+        # Получаем цену инструмента (берем из первой строки)
+        instrument_price = float(group_sorted[price_column].iloc[0])
+        
+        if instrument_price <= 0:
+            # Если цена 0 или отрицательная, пропускаем инструмент
+            continue
+        
+        # Количество строк в группе
+        param_count = len(group_sorted)
+        
+        # Вычисляем сколько лотов можем купить на выделенный капитал
+        total_lots_available = int(capital_per_security // instrument_price)
+        
+        if total_lots_available == 0:
+            # Если не хватает денег даже на один лот, выделяем пропорционально
+            allocation_per_param = capital_per_security / param_count
+            for idx in group_sorted.index:
+                result_df.at[idx, "allocation"] = allocation_per_param
+                result_df.at[idx, "estimated_lots"] = 0
+                result_df.at[idx, "used_capital"] = 0.0
+                result_df.at[idx, "unused_capital"] = allocation_per_param
+            continue
+        
+        # Распределяем лоты по параметрам
+        # Базовое количество лотов на параметр
+        base_lots_per_param = total_lots_available // param_count
+        # Остаток лотов для распределения по первым параметрам
+        extra_lots = total_lots_available % param_count
+        
+        # Распределение капитала
+        allocation_per_param = capital_per_security / param_count
+        
+        for i, idx in enumerate(group_sorted.index):
+            # Количество лотов для данного параметра
+            if i < extra_lots:
+                # Первые параметры получают на 1 лот больше (округление вверх)
+                lots_for_param = base_lots_per_param + 1
+            else:
+                # Остальные параметры получают базовое количество (округление вниз)
+                lots_for_param = base_lots_per_param
+            
+            # Заполняем результат
+            result_df.at[idx, "allocation"] = allocation_per_param
+            result_df.at[idx, "estimated_lots"] = lots_for_param
+            result_df.at[idx, "used_capital"] = lots_for_param * instrument_price
+            result_df.at[idx, "unused_capital"] = allocation_per_param - (lots_for_param * instrument_price)
+    
+    return result_df
+
+
