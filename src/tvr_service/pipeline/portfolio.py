@@ -314,44 +314,35 @@ def build_portfolio_advanced(
         
         # Количество строк в группе
         param_count = len(group_sorted)
-        
-        # Вычисляем сколько лотов можем купить на выделенный капитал
-        total_lots_available = int(capital_per_security // instrument_price)
-        
-        if total_lots_available == 0:
-            # Если не хватает денег даже на один лот, выделяем пропорционально
-            allocation_per_param = capital_per_security / param_count
-            for idx in group_sorted.index:
-                result_df.at[idx, "allocation"] = allocation_per_param
-                result_df.at[idx, "estimated_lots"] = 0
-                result_df.at[idx, "used_capital"] = 0.0
-                result_df.at[idx, "unused_capital"] = allocation_per_param
+
+        if param_count == 0:
             continue
-        
-        # Распределяем лоты по параметрам
-        # Базовое количество лотов на параметр
-        base_lots_per_param = total_lots_available // param_count
-        # Остаток лотов для распределения по первым параметрам
-        extra_lots = total_lots_available % param_count
-        
-        # Распределение капитала
-        allocation_per_param = capital_per_security / param_count
-        
+
+        # ЖАДНЫЙ АЛГОРИТМ: выдаем лоты, работая с общим бюджетом инструмента
+        remaining_capital = capital_per_security
+        lots_per_row = [0] * param_count  # Количество лотов для каждой строки
+
+        while remaining_capital >= instrument_price:
+            min_lots_idx = lots_per_row.index(min(lots_per_row))
+            lots_per_row[min_lots_idx] += 1
+            remaining_capital -= instrument_price
+
+        used_per_row = [lots * instrument_price for lots in lots_per_row]
+        total_used = sum(used_per_row)
+        leftover_capital = max(capital_per_security - total_used, 0.0)
+
         for i, idx in enumerate(group_sorted.index):
-            # Количество лотов для данного параметра
-            if i < extra_lots:
-                # Первые параметры получают на 1 лот больше (округление вверх)
-                lots_for_param = base_lots_per_param + 1
-            else:
-                # Остальные параметры получают базовое количество (округление вниз)
-                lots_for_param = base_lots_per_param
-            
-            # Заполняем результат
-            result_df.at[idx, "allocation"] = allocation_per_param
-            result_df.at[idx, "estimated_lots"] = lots_for_param
-            result_df.at[idx, "used_capital"] = lots_for_param * instrument_price
-            result_df.at[idx, "unused_capital"] = allocation_per_param - (lots_for_param * instrument_price)
+            used_capital = used_per_row[i]
+            result_df.at[idx, "allocation"] = used_capital
+            result_df.at[idx, "estimated_lots"] = lots_per_row[i]
+            result_df.at[idx, "used_capital"] = used_capital
+            result_df.at[idx, "unused_capital"] = 0.0
+
+        if leftover_capital > 0:
+            leftover_idx = lots_per_row.index(min(lots_per_row))
+            target_idx = group_sorted.index[leftover_idx]
+            result_df.at[target_idx, "allocation"] += leftover_capital
+            result_df.at[target_idx, "unused_capital"] = leftover_capital
     
     return result_df
-
 
