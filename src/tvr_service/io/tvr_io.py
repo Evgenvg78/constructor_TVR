@@ -106,14 +106,22 @@ def write_tvr2(
     except (TypeError, ValueError) as exc:
         raise TVRIOError("Column 'stroka' must contain integers for TVR export.") from exc
 
-    columns = [col for col in df.columns if col != "stroka"]
+    # Исключаем служебные столбцы strategy_id и row_alias из финального результата
+    columns = [col for col in df.columns if col not in ["stroka", "strategy_id", "row_alias"]]
     header_line = sep + sep + sep.join(columns) + "\n"
 
     lines: list[str] = [header_line]
     working = df.sort_values("stroka")
 
     for _, row in working.iterrows():
-        stroka = int(row["stroka"])
+        # Skip rows where stroka is NaN or cannot be converted to int
+        if pd.isna(row["stroka"]):
+            continue
+        try:
+            stroka = int(row["stroka"])
+        except (ValueError, TypeError):
+            continue
+        
         for idx, col in enumerate(columns, start=1):
             value = row[col]
             value_str = _format_value_for_tvr(value)
@@ -146,6 +154,9 @@ def _read_header(path: Path) -> Tuple[str, Sequence[str]]:
 def _format_value_for_tvr(value: object) -> str:
     if value is None:
         return ""
+    # Специальная обработка булевых значений - сохраняем их как строки 'True'/'False'
+    if isinstance(value, bool):
+        return "True" if value else "False"
     if isinstance(value, (float, np.floating)):
         if pd.isna(value):
             return ""

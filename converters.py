@@ -81,10 +81,16 @@ def _maybe_to_number(s: Any) -> Any:
     """Пытаемся превратить строку в число (int/float). Иначе возвращаем исходное."""
     if s is None:
         return s
+    # Специальная обработка булевых значений - сохраняем их как строки
+    if isinstance(s, bool):
+        return "True" if s else "False"
     if isinstance(s, (int, float, np.integer, np.floating)):
         return s
     if isinstance(s, str):
         t = s.strip()
+        # Не преобразуем строки 'True' и 'False' в числа
+        if t in ['True', 'False']:
+            return t
         if _num_like_re.match(t):
             # заменим запятую на точку для корректного float()
             t2 = t.replace(',', '.')
@@ -159,6 +165,10 @@ def tvr2_to_excel(
         wide_pivot = wide_pivot.rename(columns=rename_map).reset_index().rename(columns={'stroka': 'stroka'})
         wide = wide_pivot
 
+    # Исключаем служебные столбцы strategy_id и row_alias из финального результата
+    if not wide.empty:
+        wide = wide.drop(columns=['strategy_id', 'row_alias'], errors='ignore')
+    
     if convert_numbers and not wide.empty:
         for c in wide.columns:
             if c == 'stroka':

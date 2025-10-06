@@ -10,6 +10,7 @@ import pandas as pd
 from .naming import ColumnAliasMapper, sanitize_token
 
 _PLACEHOLDER_PATTERN = re.compile(r"^\{\{([A-Za-z0-9_]+)\}\}$")
+_RELATIVE_REF_PATTERN = re.compile(r"^begin([+-]\d+)?$")
 
 
 @dataclass(slots=True)
@@ -88,7 +89,8 @@ class StrategyTemplate:
             row_context.setdefault("row_alias", row.alias)
             record: Dict[str, Any] = {column: pd.NA for column in columns}
             record["stroka"] = start + row.offset
-            record["row_alias"] = row.alias
+            # Исключаем row_alias из финального результата
+            # record["row_alias"] = row.alias
 
             defaults = row.defaults
             merged: MutableMapping[str, Any] = dict(defaults)
@@ -112,4 +114,86 @@ def _resolve_value(raw_value: Any, context: Mapping[str, Any]) -> Any:
         if match:
             key = match.group(1)
             return context.get(key)
+        # Handle relative references in filter columns
+        if "," in raw_value or _RELATIVE_REF_PATTERN.match(raw_value.strip()):
+            return _resolve_relative_references(raw_value, context)
     return raw_value
+
+
+def _resolve_relative_references(value: str, context: Mapping[str, Any]) -> str:
+    """Convert relative references like 'begin+2, begin-1' to absolute stroka numbers."""
+    start = context.get("start")
+    if start is None:
+        return value
+    
+    parts = [part.strip() for part in value.split(",")]
+    resolved_parts: list[str] = []
+    
+    for part in parts:
+        match = _RELATIVE_REF_PATTERN.match(part)
+        if match:
+            offset_str = match.group(1)
+            if offset_str is None:
+                offset = 0
+            else:
+                offset = int(offset_str)
+            absolute = start + offset
+            resolved_parts.append(str(absolute))
+        else:
+            resolved_parts.append(part)
+    
+    return ", ".join(resolved_parts)
+
+
+def convert_absolute_to_relative_reference(value: Any, base_stroka: int) -> Any:
+    """Convert absolute stroka references to relative format (begin+X).
+    
+    This is used when creating a mask from parsed strategy to preserve
+    relative relationships between base rows and filters.
+    
+    Args:
+        value: The value to convert (can be string with comma-separated refs or single number)
+        base_stroka: The base stroka to calculate offsets from
+    
+    Returns:
+        Converted value with relative references, or original value if not a reference
+    """
+    if value is None or pd.isna(value):
+        return value
+    
+    # Handle numeric values (single reference)
+    if isinstance(value, (int, float)):
+        if pd.isna(value):
+            return value
+        offset = int(value) - base_stroka
+        if offset == 0:
+            return "begin"
+        elif offset > 0:
+            return f"begin+{offset}"
+        else:
+            return f"begin{offset}"
+    
+    # Handle string values (potentially comma-separated references)
+    if isinstance(value, str):
+        # Try to parse as comma-separated references
+        parts = [part.strip() for part in value.split(",")]
+        converted_parts: list[str] = []
+        
+        for part in parts:
+            # Check if this part is a number
+            try:
+                num = int(part)
+                offset = num - base_stroka
+                if offset == 0:
+                    converted_parts.append("begin")
+                elif offset > 0:
+                    converted_parts.append(f"begin+{offset}")
+                else:
+                    converted_parts.append(f"begin{offset}")
+            except ValueError:
+                # Not a number, keep as is
+                converted_parts.append(part)
+        
+        return ", ".join(converted_parts)
+    
+    return value

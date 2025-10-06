@@ -8,7 +8,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Sequence
 import pandas as pd
 
 from .naming import ColumnAliasMapper, sanitize_token
-from .strategy_template import StrategyTemplate, TemplateRow
+from .strategy_template import StrategyTemplate, TemplateRow, convert_absolute_to_relative_reference
 
 PathLike = str | Path
 
@@ -39,8 +39,27 @@ def build_template_from_mask_df(
     offset_column: str = "offset",
     stroka_column: str = "stroka",
     value_columns: Sequence[str] | None = None,
+    convert_references_to_relative: bool = True,
+    reference_columns: Iterable[str] | None = None,
 ) -> MaskTemplateResult:
-    """Convert a mask table with markers into a :class:`StrategyTemplate`."""
+    """Convert a mask table with markers into a :class:`StrategyTemplate`.
+    
+    Args:
+        mask_df: DataFrame with mask data
+        name: Template name
+        marker: Marker value for override columns (default 1)
+        metadata_columns: Additional metadata columns to skip
+        placeholders: Default placeholder values for marked columns
+        row_alias_column: Column name for row aliases
+        offset_column: Column name for offsets
+        stroka_column: Column name for stroka
+        value_columns: Explicit list of value columns to process
+        convert_references_to_relative: If True, convert absolute stroka references 
+            in reference columns to relative format (begin+X) using the first row's 
+            stroka as base. Default True.
+        reference_columns: List of columns containing stroka references to convert.
+            If None, uses common filter columns (InL1, InL2, OutL1, OutL2, secIn, secOut).
+    """
 
     if mask_df.empty:
         raise ValueError("Mask dataframe must not be empty")
@@ -50,6 +69,21 @@ def build_template_from_mask_df(
     metadata = set(_DEFAULT_METADATA_COLUMNS)
     if metadata_columns is not None:
         metadata.update(metadata_columns)
+    
+    # Determine reference columns for conversion
+    if reference_columns is None:
+        reference_columns = ["InL1", "InL2", "OutL1", "OutL2", "secIn", "secOut"]
+    reference_columns_set = set(reference_columns)
+    
+    # Determine base stroka for relative conversion (first row's stroka)
+    base_stroka = None
+    if convert_references_to_relative and stroka_column in mask_df.columns:
+        first_stroka = mask_df[stroka_column].iloc[0]
+        if pd.notna(first_stroka):
+            try:
+                base_stroka = int(first_stroka)
+            except (ValueError, TypeError):
+                pass
 
     if value_columns is None:
         candidate_columns = [
@@ -74,13 +108,26 @@ def build_template_from_mask_df(
         stroka_column=stroka_column,
     )
 
+    # Track used aliases to handle duplicates after sanitization
+    used_aliases: Dict[str, int] = {}
+
     for index, row in mask_df.iterrows():
         raw_alias = row.get(row_alias_column)
         if pd.isna(raw_alias) or str(raw_alias).strip() == "":
             raise ValueError(
                 f"Row {index} is missing value in column '{row_alias_column}'"
             )
-        row_alias = sanitize_token(str(raw_alias))
+        
+        # Sanitize and ensure uniqueness
+        base_alias = sanitize_token(str(raw_alias)).lstrip('_')
+        row_alias = base_alias
+        if row_alias in used_aliases:
+            suffix = used_aliases[row_alias]
+            used_aliases[row_alias] += 1
+            row_alias = f"{base_alias}_{suffix}"
+        else:
+            used_aliases[row_alias] = 1
+        
         offset = offsets[index]
         defaults: Dict[str, Any] = {}
 
@@ -96,6 +143,9 @@ def build_template_from_mask_df(
                 default_value = placeholders.get(column, pd.NA)
                 defaults[column_alias] = default_value
             else:
+                # Convert references to relative format if applicable
+                if base_stroka is not None and column in reference_columns_set:
+                    cell_value = convert_absolute_to_relative_reference(cell_value, base_stroka)
                 defaults[column_alias] = cell_value
 
         template_rows.append(
@@ -134,6 +184,8 @@ def build_template_from_mask_file(
     stroka_column: str = "stroka",
     value_columns: Sequence[str] | None = None,
     sheet_name: int | str = 0,
+    convert_references_to_relative: bool = True,
+    reference_columns: Iterable[str] | None = None,
 ) -> MaskTemplateResult:
     """Load mask table from Excel/CSV file and build a template."""
 
@@ -158,6 +210,8 @@ def build_template_from_mask_file(
         offset_column=offset_column,
         stroka_column=stroka_column,
         value_columns=value_columns,
+        convert_references_to_relative=convert_references_to_relative,
+        reference_columns=reference_columns,
     )
 
 

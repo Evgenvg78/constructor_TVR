@@ -76,8 +76,9 @@ class StrategyGenerator:
                 context=context,
             )
             for record in block_records:
-                if include_strategy_column:
-                    record.setdefault("strategy_id", strategy_id)
+                # Исключаем добавление strategy_id в финальный результат
+                # if include_strategy_column:
+                #     record.setdefault("strategy_id", strategy_id)
                 if (
                     sec_value is not None
                     and "Sec 0" in record
@@ -186,9 +187,9 @@ def _make_separator_rows(
 
 def _base_output_columns(columns: Sequence[str], include_strategy: bool) -> List[str]:
     ordered: List[str] = []
-    if include_strategy:
-        ordered.append("strategy_id")
-    ordered.extend(["stroka", "row_alias"])
+    # Исключаем служебные столбцы strategy_id и row_alias из финального результата
+    # Они используются только для внутренней обработки
+    ordered.extend(["stroka"])  # stroka остается как обязательный столбец
     for column in columns:
         if column not in ordered:
             ordered.append(column)
